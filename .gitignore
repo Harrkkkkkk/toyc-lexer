@@ -1,0 +1,13 @@
+# Build directories
+build/
+cmake-build-*/
+
+# Compiled binaries
+toyc_lexer
+*.exe
+*.out
+
+# IDE files
+.vscode/
+.idea/
+*.swp
