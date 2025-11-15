@@ -288,47 +288,79 @@ MulExpr → UnaryExpr ((*|/|%) UnaryExpr)*
 UnaryExpr → PrimaryExpr | (+|-|!) UnaryExpr
 PrimaryExpr → ID | NUMBER | "(" Expr ")" | ID "(" (Expr ("," Expr)*)? ")"
 */
-bool Parser::Expr() { return LOrExpr(); }
+bool Parser::Expr() { 
+    return LOrExpr(); 
+}
+
+// LOrExpr → LAndExpr ( "||" LAndExpr )*
 bool Parser::LOrExpr() {
     if (!LAndExpr()) return false;
-    while (check(T_OROR)) { advance(); if (!LAndExpr()) { add_error_line(cur.line); return false; } }
+    while (match(T_OROR)) {
+        if (!LAndExpr()) { add_error_line(cur.line); return false; }
+    }
     return true;
 }
+
+// LAndExpr → RelExpr ( "&&" RelExpr )*
 bool Parser::LAndExpr() {
     if (!RelExpr()) return false;
-    while (check(T_ANDAND)) { advance(); if (!RelExpr()) { add_error_line(cur.line); return false; } }
+    while (match(T_ANDAND)) {
+        if (!RelExpr()) { add_error_line(cur.line); return false; }
+    }
     return true;
 }
+
+// RelExpr → AddExpr ( relop AddExpr )*
 bool Parser::RelExpr() {
     if (!AddExpr()) return false;
-    while (check(T_LT) || check(T_GT) || check(T_LE) || check(T_GE) || check(T_EQ) || check(T_NEQ)) {
+    while ( check(T_LT) || check(T_GT) || check(T_LE) || check(T_GE)
+         || check(T_EQ) || check(T_NEQ)) {
         advance();
         if (!AddExpr()) { add_error_line(cur.line); return false; }
     }
     return true;
 }
+
+// AddExpr → MulExpr (("+"|"-") MulExpr)*
 bool Parser::AddExpr() {
     if (!MulExpr()) return false;
-    while (check(T_PLUS) || check(T_MINUS)) { advance(); if (!MulExpr()) { add_error_line(cur.line); return false; } }
+    while (check(T_PLUS) || check(T_MINUS)) {
+        advance();
+        if (!MulExpr()) { add_error_line(cur.line); return false; }
+    }
     return true;
 }
+
+// MulExpr → UnaryExpr (("*"|"/"|"%") UnaryExpr)*
 bool Parser::MulExpr() {
     if (!UnaryExpr()) return false;
-    while (check(T_MUL) || check(T_DIV) || check(T_MOD)) { advance(); if (!UnaryExpr()) { add_error_line(cur.line); return false; } }
+    while (check(T_MUL) || check(T_DIV) || check(T_MOD)) {
+        advance();
+        if (!UnaryExpr()) { add_error_line(cur.line); return false; }
+    }
     return true;
 }
+
+// UnaryExpr → ("+"|"-"|"!") UnaryExpr | PrimaryExpr
 bool Parser::UnaryExpr() {
-    if (check(T_PLUS) || check(T_MINUS) || check(T_NOT)) { advance(); return UnaryExpr(); }
+    if (check(T_PLUS) || check(T_MINUS) || check(T_NOT)) {
+        advance();
+        if (!UnaryExpr()) { add_error_line(cur.line); return false; }
+        return true;
+    }
     return PrimaryExpr();
 }
+
+// PrimaryExpr → ID | NUMBER | "(" Expr ")" | ID "(" args ")"
 bool Parser::PrimaryExpr() {
+    // function call or variable
     if (check(T_ID)) {
         std::string name = cur.lexeme;
         int ln = cur.line;
         advance();
+
+        // function call
         if (match(T_LPAREN)) {
-            // function call
-            // arguments optional
             if (!check(T_RPAREN)) {
                 while (true) {
                     if (!Expr()) { add_error_line(cur.line); return false; }
@@ -336,25 +368,31 @@ bool Parser::PrimaryExpr() {
                     else break;
                 }
             }
+
             if (!match(T_RPAREN)) { add_error_line(cur.line); return false; }
-            // semantic: function must be declared earlier or be current function (allow recursion)
+
+            // semantic: function must exist
             if (!(functions_declared.count(name) || name == current_function)) {
                 add_error_line(ln);
             }
             return true;
-        } else {
-            // variable usage
-            if (!vartable.has_var(name)) {
-                add_error_line(ln);
-            }
-            return true;
         }
-    } else if (check(T_NUMBER)) {
-        advance(); return true;
-    } else if (match(T_LPAREN)) {
+
+        // variable usage
+        if (!vartable.has_var(name)) add_error_line(ln);
+        return true;
+    }
+
+    if (check(T_NUMBER)) {
+        advance();
+        return true;
+    }
+
+    if (match(T_LPAREN)) {
         if (!Expr()) { add_error_line(cur.line); return false; }
         if (!match(T_RPAREN)) { add_error_line(cur.line); return false; }
         return true;
     }
+
     return false;
 }
