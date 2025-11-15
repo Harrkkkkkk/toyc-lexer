@@ -7,6 +7,7 @@
 #include <vector>
 #include <string>
 #include <set>
+#include <unordered_map>  // ⚠️ 添加这行！
 
 class Parser {
 public:
@@ -42,10 +43,15 @@ private:
     bool Stmt();
     bool Expr(); // returns true if parsed an expression
     bool LOrExpr();
+    bool LOrExprPrime();      // ← 新增
     bool LAndExpr();
+    bool LAndExprPrime();     // ← 新增
     bool RelExpr();
+    bool RelExprPrime();      // ← 新增
     bool AddExpr();
+    bool AddExprPrime();      // ← 新增
     bool MulExpr();
+    bool MulExprPrime();      // ← 新增
     bool UnaryExpr();
     bool PrimaryExpr();
 
