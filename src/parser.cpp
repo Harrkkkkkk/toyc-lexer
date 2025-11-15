@@ -1,51 +1,33 @@
 #include "parser.h"
 #include <iostream>
-#include <set>
 
 Parser::Parser(const std::vector<Token> &toks): tokens(toks), pos(0) {
-    if (!tokens.empty()) {
-        cur = tokens[pos];
-    }
+    cur = tokens[pos];
 }
 
 void Parser::advance() {
-    if (pos + 1 < tokens.size()) {
-        ++pos;
-        cur = tokens[pos];
-    }
+    if (pos + 1 < tokens.size()) ++pos;
+    cur = tokens[pos];
 }
 
-bool Parser::check(TokenType t) const { 
-    return !tokens.empty() && cur.type == t; 
-}
-
+bool Parser::check(TokenType t) const { return cur.type == t; }
 bool Parser::match(TokenType t) {
-    if (check(t)) { 
-        advance(); 
-        return true; 
-    }
+    if (check(t)) { advance(); return true; }
     return false;
 }
 
 void Parser::add_error_line(int ln) {
     // add in order, avoid duplicates for same immediate spot
-    if (errors.empty() || errors.back() != ln) {
-        errors.push_back(ln);
-    }
+    if (errors.empty() || errors.back() != ln) errors.push_back(ln);
 }
 
 void Parser::sync_to_stmt() {
-    // Enhanced sync: stop at statement boundaries
-    while (!check(T_EOF)) {
-        if (check(T_SEMI) || check(T_RBRACE) || 
-            check(T_KW_INT) || check(T_KW_VOID) || 
-            check(T_KW_IF) || check(T_KW_WHILE) || 
-            check(T_KW_RETURN) || check(T_KW_BREAK) || 
-            check(T_KW_CONTINUE)) {
-            break;
-        }
-        advance();
-    }
+    // skip tokens until a statement boundary to continue parsing
+    static std::set<TokenType> sync = {
+        T_SEMI, T_LBRACE, T_RBRACE, T_KW_INT, T_KW_VOID, T_KW_IF, T_KW_WHILE, T_KW_RETURN, T_KW_BREAK, T_KW_CONTINUE
+    };
+    while (!check(T_EOF) && !sync.count(cur.type)) advance();
+    // if semicolon, consume it to avoid loop
     if (check(T_SEMI)) advance();
 }
 
@@ -73,21 +55,15 @@ bool Parser::is_accept() const {
     return errors.empty();
 }
 
-const std::vector<int>& Parser::get_errors() const { 
-    return errors; 
-}
+const std::vector<int>& Parser::get_errors() const { return errors; }
 
 // CompUnit → FuncDef+
 void Parser::CompUnit() {
     while (!check(T_EOF)) {
         if (!FuncDef()) {
             // error recovery: skip to next top-level (int/void) or EOF
-            if (!check(T_EOF)) {
-                add_error_line(cur.line);
-            }
-            while (!check(T_EOF) && cur.type != T_KW_INT && cur.type != T_KW_VOID) {
-                advance();
-            }
+            add_error_line(cur.line);
+            while (!check(T_EOF) && cur.type != T_KW_INT && cur.type != T_KW_VOID) advance();
         }
     }
 }
@@ -124,19 +100,20 @@ bool Parser::FuncDef() {
     finfo.params.clear();
     if (!check(T_RPAREN)) {
         // at least one param
-        do {
+        while (true) {
             if (!Param()) {
                 add_error_line(cur.line);
                 sync_to_stmt();
                 break;
             } else {
+                // param was consumed: last seen ID token was param name
+                // We don't have direct param name here; for simplicity we won't store names reliably
+                // but store placeholder
                 finfo.params.push_back("p");
             }
-            if (!check(T_RPAREN) && !match(T_COMMA)) {
-                add_error_line(cur.line);
-                break;
-            }
-        } while (!check(T_RPAREN));
+            if (match(T_COMMA)) continue;
+            else break;
+        }
     }
     if (!match(T_RPAREN)) {
         add_error_line(cur.line);
@@ -159,10 +136,7 @@ Param → “int” ID
 */
 bool Parser::Param() {
     if (!match(T_KW_INT)) return false;
-    if (!check(T_ID)) { 
-        add_error_line(cur.line); 
-        return false; 
-    }
+    if (!check(T_ID)) { add_error_line(cur.line); return false; }
     // declare param as variable in current scope
     std::string pname = cur.lexeme;
     vartable.declare_var(pname, cur.line);
@@ -174,10 +148,7 @@ bool Parser::Param() {
 Block → “{” Stmt* “}”
 */
 bool Parser::Block() {
-    if (!match(T_LBRACE)) { 
-        add_error_line(cur.line); 
-        return false; 
-    }
+    if (!match(T_LBRACE)) { add_error_line(cur.line); return false; }
     // new scope
     vartable.push_scope();
     while (!check(T_RBRACE) && !check(T_EOF)) {
@@ -212,103 +183,54 @@ bool Parser::Stmt() {
         // variable declaration with initialization required
         int ln = cur.line;
         advance();
-        if (!check(T_ID)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
+        if (!check(T_ID)) { add_error_line(cur.line); sync_to_stmt(); return false; }
         std::string vname = cur.lexeme;
         // declare variable in current scope
         bool okdecl = vartable.declare_var(vname, cur.line);
         advance();
-        if (!match(T_ASSIGN)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
-        if (!Expr()) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
-        if (!match(T_SEMI)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
+        if (!match(T_ASSIGN)) { add_error_line(cur.line); sync_to_stmt(); return false; }
+        if (!Expr()) { add_error_line(cur.line); sync_to_stmt(); return false; }
+        if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); return false; }
         return true;
     }
 
     if (check(T_KW_IF)) {
         advance();
-        if (!match(T_LPAREN)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
-        if (!Expr()) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
-        if (!match(T_RPAREN)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
-        if (!Stmt()) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
+        if (!match(T_LPAREN)) { add_error_line(cur.line); sync_to_stmt(); return false; }
+        if (!Expr()) { add_error_line(cur.line); sync_to_stmt(); }
+        if (!match(T_RPAREN)) { add_error_line(cur.line); sync_to_stmt(); }
+        if (!Stmt()) { add_error_line(cur.line); sync_to_stmt(); }
         if (check(T_KW_ELSE)) {
             advance();
-            if (!Stmt()) { 
-                add_error_line(cur.line); 
-                sync_to_stmt(); 
-            }
+            if (!Stmt()) { add_error_line(cur.line); sync_to_stmt(); }
         }
         return true;
     }
 
     if (check(T_KW_WHILE)) {
         advance();
-        if (!match(T_LPAREN)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
-        if (!Expr()) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
-        if (!match(T_RPAREN)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
-        if (!Stmt()) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
+        if (!match(T_LPAREN)) { add_error_line(cur.line); sync_to_stmt(); return false; }
+        if (!Expr()) { add_error_line(cur.line); sync_to_stmt(); }
+        if (!match(T_RPAREN)) { add_error_line(cur.line); sync_to_stmt(); }
+        if (!Stmt()) { add_error_line(cur.line); sync_to_stmt(); }
         return true;
     }
 
     if (check(T_KW_BREAK)) {
         advance();
-        if (!match(T_SEMI)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
+        // check that we are inside a loop? We don't track loop nesting precisely; a conservative approach: allow but could flag
+        if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); }
         return true;
     }
     if (check(T_KW_CONTINUE)) {
         advance();
-        if (!match(T_SEMI)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
+        if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); }
         return true;
     }
 
     if (check(T_KW_RETURN)) {
         advance();
+        // parse expr (could be empty only for void; but spec: void return must be without value)
         if (!Expr()) {
             // allow empty expression? no, grammar required return Expr ";"
             add_error_line(cur.line);
@@ -316,10 +238,7 @@ bool Parser::Stmt() {
             if (check(T_SEMI)) advance();
             return false;
         }
-        if (!match(T_SEMI)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-        }
+        if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); }
         return true;
     }
 
@@ -331,16 +250,8 @@ bool Parser::Stmt() {
         advance();
         if (check(T_ASSIGN)) {
             advance();
-            if (!Expr()) { 
-                add_error_line(cur.line); 
-                sync_to_stmt(); 
-                return false; 
-            }
-            if (!match(T_SEMI)) { 
-                add_error_line(cur.line); 
-                sync_to_stmt(); 
-                return false; 
-            }
+            if (!Expr()) { add_error_line(cur.line); sync_to_stmt(); return false; }
+            if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); return false; }
             // check var declared before
             if (!vartable.has_var(name)) add_error_line(tokens[save].line);
             return true;
@@ -348,217 +259,102 @@ bool Parser::Stmt() {
             // function call or variable expr: reset to saved pos and parse expr
             pos = save;
             cur = tokens[pos];
-            if (!Expr()) { 
-                add_error_line(cur.line); 
-                sync_to_stmt(); 
-                return false; 
-            }
-            if (!match(T_SEMI)) { 
-                add_error_line(cur.line); 
-                sync_to_stmt(); 
-                return false; 
-            }
+            if (!Expr()) { add_error_line(cur.line); sync_to_stmt(); return false; }
+            if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); return false; }
             return true;
         }
     }
 
     // otherwise expression statement
     if (Expr()) {
-        if (!match(T_SEMI)) { 
-            add_error_line(cur.line); 
-            sync_to_stmt(); 
-            return false; 
-        }
+        if (!match(T_SEMI)) { add_error_line(cur.line); sync_to_stmt(); return false; }
         return true;
     }
 
     // unknown start
-    if (!check(T_EOF)) {
-        add_error_line(cur.line);
-    }
+    add_error_line(cur.line);
     sync_to_stmt();
     return false;
 }
 
 /*
-Expressions implementation with correct precedence and left-recursion elimination:
+Expressions implementation with precedence:
 Expr → LOrExpr
-LOrExpr → LAndExpr LOrExpr'
-LOrExpr' → "||" LAndExpr LOrExpr' | ε
-LAndExpr → RelExpr LAndExpr'
-LAndExpr' → "&&" RelExpr LAndExpr' | ε
-RelExpr → AddExpr RelExpr'
-RelExpr' → relop AddExpr RelExpr' | ε
-AddExpr → MulExpr AddExpr'
-AddExpr' → ("+"|"-") MulExpr AddExpr' | ε
-MulExpr → UnaryExpr MulExpr'
-MulExpr' → ("*"|"/"|"%") UnaryExpr MulExpr' | ε
-UnaryExpr → ("+"|"-"|"!") UnaryExpr | PrimaryExpr
+LOrExpr → LAndExpr | LOrExpr "||" LAndExpr
+LAndExpr → RelExpr | LAndExpr "&&" RelExpr
+RelExpr → AddExpr (relop AddExpr)*
+AddExpr → MulExpr ((+|-) MulExpr)*
+MulExpr → UnaryExpr ((*|/|%) UnaryExpr)*
+UnaryExpr → PrimaryExpr | (+|-|!) UnaryExpr
 PrimaryExpr → ID | NUMBER | "(" Expr ")" | ID "(" (Expr ("," Expr)*)? ")"
 */
-
-bool Parser::Expr() { 
-    return LOrExpr(); 
-}
-
-// LOrExpr → LAndExpr LOrExpr'
+bool Parser::Expr() { return LOrExpr(); }
 bool Parser::LOrExpr() {
     if (!LAndExpr()) return false;
-    return LOrExprPrime();
-}
-
-bool Parser::LOrExprPrime() {
-    if (match(T_OROR)) {
-        if (!LAndExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return LOrExprPrime();
-    }
+    while (check(T_OROR)) { advance(); if (!LAndExpr()) { add_error_line(cur.line); return false; } }
     return true;
 }
-
-// LAndExpr → RelExpr LAndExpr'
 bool Parser::LAndExpr() {
     if (!RelExpr()) return false;
-    return LAndExprPrime();
-}
-
-bool Parser::LAndExprPrime() {
-    if (match(T_ANDAND)) {
-        if (!RelExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return LAndExprPrime();
-    }
+    while (check(T_ANDAND)) { advance(); if (!RelExpr()) { add_error_line(cur.line); return false; } }
     return true;
 }
-
-// RelExpr → AddExpr RelExpr'
 bool Parser::RelExpr() {
     if (!AddExpr()) return false;
-    return RelExprPrime();
-}
-
-bool Parser::RelExprPrime() {
-    if (check(T_LT) || check(T_GT) || check(T_LE) || check(T_GE) ||
-        check(T_EQ) || check(T_NEQ)) {
+    while (check(T_LT) || check(T_GT) || check(T_LE) || check(T_GE) || check(T_EQ) || check(T_NEQ)) {
         advance();
-        if (!AddExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return RelExprPrime();
+        if (!AddExpr()) { add_error_line(cur.line); return false; }
     }
     return true;
 }
-
-// AddExpr → MulExpr AddExpr'
 bool Parser::AddExpr() {
     if (!MulExpr()) return false;
-    return AddExprPrime();
-}
-
-bool Parser::AddExprPrime() {
-    if (check(T_PLUS) || check(T_MINUS)) {
-        advance();
-        if (!MulExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return AddExprPrime();
-    }
+    while (check(T_PLUS) || check(T_MINUS)) { advance(); if (!MulExpr()) { add_error_line(cur.line); return false; } }
     return true;
 }
-
-// MulExpr → UnaryExpr MulExpr'
 bool Parser::MulExpr() {
     if (!UnaryExpr()) return false;
-    return MulExprPrime();
-}
-
-bool Parser::MulExprPrime() {
-    if (check(T_MUL) || check(T_DIV) || check(T_MOD)) {
-        advance();
-        if (!UnaryExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return MulExprPrime();
-    }
+    while (check(T_MUL) || check(T_DIV) || check(T_MOD)) { advance(); if (!UnaryExpr()) { add_error_line(cur.line); return false; } }
     return true;
 }
-
-// UnaryExpr → ("+"|"-"|"!") UnaryExpr | PrimaryExpr
 bool Parser::UnaryExpr() {
-    if (check(T_PLUS) || check(T_MINUS) || check(T_NOT)) {
-        advance();
-        if (!UnaryExpr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return true;
-    }
+    if (check(T_PLUS) || check(T_MINUS) || check(T_NOT)) { advance(); return UnaryExpr(); }
     return PrimaryExpr();
 }
-
-// PrimaryExpr → ID | NUMBER | "(" Expr ")" | ID "(" args ")"
 bool Parser::PrimaryExpr() {
-    // function call or variable
     if (check(T_ID)) {
         std::string name = cur.lexeme;
         int ln = cur.line;
         advance();
-
-        // function call
         if (match(T_LPAREN)) {
+            // function call
+            // arguments optional
             if (!check(T_RPAREN)) {
-                do {
-                    if (!Expr()) { 
-                        add_error_line(cur.line); 
-                        return false; 
-                    }
-                    if (!check(T_RPAREN) && !match(T_COMMA)) {
-                        add_error_line(cur.line);
-                        break;
-                    }
-                } while (!check(T_RPAREN));
+                while (true) {
+                    if (!Expr()) { add_error_line(cur.line); return false; }
+                    if (match(T_COMMA)) continue;
+                    else break;
+                }
             }
-
-            if (!match(T_RPAREN)) { 
-                add_error_line(cur.line); 
-                return false; 
-            }
-
-            // semantic: function must exist
+            if (!match(T_RPAREN)) { add_error_line(cur.line); return false; }
+            // semantic: function must be declared earlier or be current function (allow recursion)
             if (!(functions_declared.count(name) || name == current_function)) {
                 add_error_line(ln);
             }
             return true;
+        } else {
+            // variable usage
+            if (!vartable.has_var(name)) {
+                add_error_line(ln);
+            }
+            return true;
         }
-
-        // variable usage
-        if (!vartable.has_var(name)) add_error_line(ln);
+    } else if (check(T_NUMBER)) {
+        advance(); return true;
+    } else if (match(T_LPAREN)) {
+        if (!Expr()) { add_error_line(cur.line); return false; }
+        if (!match(T_RPAREN)) { add_error_line(cur.line); return false; }
         return true;
     }
-
-    if (check(T_NUMBER)) {
-        advance();
-        return true;
-    }
-
-    if (match(T_LPAREN)) {
-        if (!Expr()) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        if (!match(T_RPAREN)) { 
-            add_error_line(cur.line); 
-            return false; 
-        }
-        return true;
-    }
-
     return false;
 }
