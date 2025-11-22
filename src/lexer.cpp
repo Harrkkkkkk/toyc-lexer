@@ -87,12 +87,10 @@ Token read_ident_or_keyword(){
     return tk;
 }
 
-// integer constant, optionally with leading '-'
-Token read_number_with_optional_minus(bool leading_minus){
-    size_t start = posi - (leading_minus ? 1 : 0);
-
+// read unsigned integer constant (no leading sign)
+Token read_number(){
+    size_t start = posi;
     while(is_digit(peek_char())) get_char();
-
     Token tk;
     tk.kind = TK_INTCONST;
     tk.typ  = "IntConst";
@@ -130,24 +128,13 @@ int main(){
             continue;
         }
 
-        // negative number
-        if(c=='-' && is_digit(peek_char(1))){
-            get_char(); // consume '-'
-            tokens.push_back(read_number_with_optional_minus(true));
-            continue;
-        }
-
-        // number
+        // number (unsigned; '-' is tokenized separately)
         if(is_digit(c)){
-            size_t start = posi;
-            while(is_digit(peek_char())) get_char();
-            tokens.push_back({
-                TK_INTCONST, "IntConst", input.substr(start, posi - start)
-            });
+            tokens.push_back(read_number());
             continue;
         }
 
-        // multi-character operators
+        // multi-character operators (must check before single-char)
         static const vector<string> multi_ops = {
             "<=" , ">=" , "==" , "!=" , "&&" , "||"
         };
@@ -163,14 +150,17 @@ int main(){
         if(matched) continue;
 
         // one-character operators / symbols
-        static const string one_ops = "(){},;+-*/%<>=";
+        // include '!' as single-character logical not
+        static const string one_ops = "(){},;+-*/%<>!=|&";
         char ch = get_char();
 
         string s(1, ch);
         if(one_ops.find(ch) != string::npos){
+            // Note: for '|' and '&' single char appearing alone are allowed tokens,
+            // but '||' and '&&' were matched above and won't reach here.
             tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
         } else {
-            // unknown char, still output
+            // unknown char, still output as symbol (helps debugging)
             tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
         }
     }
