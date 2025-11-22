@@ -1,123 +1,185 @@
-#include "lexer.h"
-#include <cctype>
+// src/lexer.cpp
+// Hand-written lexer for ToyC as specified.
+// Compile: g++ -std=c++17 -O2 -o toyc_lexer lexer.cpp
 
-Lexer::Lexer(const std::string &src_): text(src_), i(0), line(1) {}
+#include <bits/stdc++.h>
+using namespace std;
 
-char Lexer::peek() const {
-    if (i >= text.size()) return '\0';
-    return text[i];
+enum TokenKind { TK_KEYWORD, TK_IDENT, TK_INTCONST, TK_SYMBOL };
+
+struct Token {
+    TokenKind kind;
+    string typ;   // textual type for output (e.g. "'int'" or "Ident" or "IntConst")
+    string text;  // content string
+};
+
+static const unordered_set<string> keywords = {
+    "int","void","if","else","while","break","continue","return"
+};
+
+string input;
+size_t posi = 0, len_input = 0;
+
+// helper
+bool is_alpha(char c){ return (c=='_') || ('a'<=c && c<='z') || ('A'<=c && c<='Z'); }
+bool is_digit(char c){ return '0'<=c && c<='9'; }
+bool is_alnum(char c){ return is_alpha(c) || is_digit(c); }
+
+char peek_char(size_t offset=0){
+    size_t p = posi + offset;
+    if(p < len_input) return input[p];
+    return '\0';
 }
-char Lexer::get() {
-    if (i >= text.size()) return '\0';
-    char c = text[i++];
-    if (c == '\n') ++line;
-    return c;
-}
-bool Lexer::starts_with(const std::string &s) const {
-    if (i + s.size() > text.size()) return false;
-    return text.compare(i, s.size(), s) == 0;
+char get_char(){
+    if(posi < len_input) return input[posi++];
+    return '\0';
 }
 
-void Lexer::skip_whitespace_and_comments() {
-    while (true) {
-        if (std::isspace((unsigned char)peek())) { get(); continue; }
-        if (starts_with("//")) {
-            // single-line comment
-            i += 2;
-            while (peek() != '\n' && peek() != '\0') get();
+// skip whitespace & comments
+void skip_space_and_comments(){
+    while(true){
+        // whitespace
+        while(posi < len_input &&
+             (input[posi]==' ' || input[posi]=='\t' || input[posi]=='\n' || input[posi]=='\r'))
+            posi++;
+
+        // line comment
+        if(posi+1 < len_input && input[posi]=='/' && input[posi+1]=='/'){
+            posi += 2;
+            while(posi < len_input && input[posi] != '\n') posi++;
             continue;
         }
-        if (starts_with("/*")) {
-            i += 2;
-            bool closed = false;
-            while (peek() != '\0') {
-                if (starts_with("*/")) { i += 2; closed = true; break; }
-                get();
-            }
-            if (!closed) {
-                // unterminated comment -> we'll treat as EOF but inject unknown token handled by parser
-                return;
+
+        // block comment
+        if(posi+1 < len_input && input[posi]=='/' && input[posi+1]=='*'){
+            posi += 2;
+            while(posi+1 < len_input){
+                if(input[posi]=='*' && input[posi+1]=='/'){
+                    posi += 2;
+                    break;
+                }
+                posi++;
             }
             continue;
         }
+
         break;
     }
 }
 
-Token Lexer::lex_identifier_or_keyword() {
-    std::string s;
-    while (std::isalnum((unsigned char)peek()) || peek() == '_') s.push_back(get());
-    if (s == "int") return Token(T_KW_INT, s, line);
-    if (s == "void") return Token(T_KW_VOID, s, line);
-    if (s == "if") return Token(T_KW_IF, s, line);
-    if (s == "else") return Token(T_KW_ELSE, s, line);
-    if (s == "while") return Token(T_KW_WHILE, s, line);
-    if (s == "break") return Token(T_KW_BREAK, s, line);
-    if (s == "continue") return Token(T_KW_CONTINUE, s, line);
-    if (s == "return") return Token(T_KW_RETURN, s, line);
-    return Token(T_ID, s, line);
-}
+// identifier / keyword
+Token read_ident_or_keyword(){
+    size_t start = posi;
+    get_char();
+    while(is_alnum(peek_char())) get_char();
+    string s = input.substr(start, posi - start);
 
-Token Lexer::lex_number() {
-    std::string s;
-    if (peek() == '-') s.push_back(get()); // spec allows -? leading
-    if (peek() == '0') {
-        s.push_back(get());
+    Token tk;
+    if(keywords.count(s)){
+        tk.kind = TK_KEYWORD;
+        tk.typ  = "'" + s + "'";
+        tk.text = s;
     } else {
-        if (!std::isdigit((unsigned char)peek())) {
-            // just '-' not followed by digit -> return minus as token handled outside
-            return Token(T_UNKNOWN, s, line);
-        }
-        while (std::isdigit((unsigned char)peek())) s.push_back(get());
+        tk.kind = TK_IDENT;
+        tk.typ  = "Ident";
+        tk.text = s;
     }
-    return Token(T_NUMBER, s, line);
+    return tk;
 }
 
-std::vector<Token> Lexer::tokenize() {
-    std::vector<Token> out;
-    while (peek() != '\0') {
-        skip_whitespace_and_comments();
-        char c = peek();
-        if (c == '\0') break;
-        // multi-char ops
-        if (starts_with("==")) { out.emplace_back(T_EQ, "==", line); i += 2; continue; }
-        if (starts_with("!=")) { out.emplace_back(T_NEQ, "!=", line); i += 2; continue; }
-        if (starts_with("<=")) { out.emplace_back(T_LE, "<=", line); i += 2; continue; }
-        if (starts_with(">=")) { out.emplace_back(T_GE, ">=", line); i += 2; continue; }
-        if (starts_with("&&")) { out.emplace_back(T_ANDAND, "&&", line); i += 2; continue; }
-        if (starts_with("||")) { out.emplace_back(T_OROR, "||", line); i += 2; continue; }
+// integer constant, optionally with leading '-'
+Token read_number_with_optional_minus(bool leading_minus){
+    size_t start = posi - (leading_minus ? 1 : 0);
 
-        if (std::isalpha((unsigned char)c) || c == '_') {
-            out.push_back(lex_identifier_or_keyword()); continue;
-        }
-        if (std::isdigit((unsigned char)c) || (c == '-' && i+1 < text.size() && std::isdigit((unsigned char)text[i+1]))) {
-            out.push_back(lex_number()); continue;
+    while(is_digit(peek_char())) get_char();
+
+    Token tk;
+    tk.kind = TK_INTCONST;
+    tk.typ  = "IntConst";
+    tk.text = input.substr(start, posi - start);
+    return tk;
+}
+
+bool starts_with(const string &s){
+    return posi + s.size() <= len_input &&
+           input.compare(posi, s.size(), s) == 0;
+}
+
+int main(){
+    ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
+    {
+        ostringstream ss;
+        ss << cin.rdbuf();
+        input = ss.str();
+    }
+    len_input = input.size();
+
+    vector<Token> tokens;
+
+    while(true){
+        skip_space_and_comments();
+        if(posi >= len_input) break;
+
+        char c = peek_char();
+
+        // identifier / keyword
+        if(is_alpha(c)){
+            tokens.push_back(read_ident_or_keyword());
+            continue;
         }
 
-        // single char
-        get(); // consume
-        switch (c) {
-            case '+': out.emplace_back(T_PLUS, "+", line); break;
-            case '-': out.emplace_back(T_MINUS, "-", line); break;
-            case '*': out.emplace_back(T_MUL, "*", line); break;
-            case '/': out.emplace_back(T_DIV, "/", line); break;
-            case '%': out.emplace_back(T_MOD, "%", line); break;
-            case '(' : out.emplace_back(T_LPAREN, "(", line); break;
-            case ')' : out.emplace_back(T_RPAREN, ")", line); break;
-            case '{' : out.emplace_back(T_LBRACE, "{", line); break;
-            case '}' : out.emplace_back(T_RBRACE, "}", line); break;
-            case ',' : out.emplace_back(T_COMMA, ",", line); break;
-            case ';' : out.emplace_back(T_SEMI, ";", line); break;
-            case '=' : out.emplace_back(T_ASSIGN, "=", line); break;
-            case '<' : out.emplace_back(T_LT, "<", line); break;
-            case '>' : out.emplace_back(T_GT, ">", line); break;
-            case '!' : out.emplace_back(T_NOT, "!", line); break;
-            case '&' : out.emplace_back(T_UNKNOWN, "&", line); break;
-            case '|' : out.emplace_back(T_UNKNOWN, "|", line); break;
-            default:
-                out.emplace_back(T_UNKNOWN, std::string(1,c), line);
+        // negative number
+        if(c=='-' && is_digit(peek_char(1))){
+            get_char(); // consume '-'
+            tokens.push_back(read_number_with_optional_minus(true));
+            continue;
+        }
+
+        // number
+        if(is_digit(c)){
+            size_t start = posi;
+            while(is_digit(peek_char())) get_char();
+            tokens.push_back({
+                TK_INTCONST, "IntConst", input.substr(start, posi - start)
+            });
+            continue;
+        }
+
+        // multi-character operators
+        static const vector<string> multi_ops = {
+            "<=" , ">=" , "==" , "!=" , "&&" , "||"
+        };
+        bool matched = false;
+        for(const auto &op : multi_ops){
+            if(starts_with(op)){
+                tokens.push_back({ TK_SYMBOL, "'" + op + "'", op });
+                posi += op.size();
+                matched = true;
+                break;
+            }
+        }
+        if(matched) continue;
+
+        // one-character operators / symbols
+        static const string one_ops = "(){},;+-*/%<>=";
+        char ch = get_char();
+
+        string s(1, ch);
+        if(one_ops.find(ch) != string::npos){
+            tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
+        } else {
+            // unknown char, still output
+            tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
         }
     }
-    out.emplace_back(T_EOF, "", line);
-    return out;
+
+    // output
+    for(size_t i=0;i<tokens.size();i++){
+        const auto &t = tokens[i];
+        cout << i << ":" << t.typ << ":\"" << t.text << "\"\n";
+    }
+
+    return 0;
 }
