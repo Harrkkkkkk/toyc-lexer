@@ -1,175 +1,255 @@
-// src/lexer.cpp
-// Hand-written lexer for ToyC as specified.
-// Compile: g++ -std=c++17 -O2 -o toyc_lexer lexer.cpp
+#include "lexer.h"
+#include <unordered_map>
+#include <cctype>
 
-#include <bits/stdc++.h>
-using namespace std;
+Lexer::Lexer(const std::string& source) 
+    : input(source), position(0), line(1), column(1) {}
 
-enum TokenKind { TK_KEYWORD, TK_IDENT, TK_INTCONST, TK_SYMBOL };
-
-struct Token {
-    TokenKind kind;
-    string typ;   // textual type for output (e.g. "'int'" or "Ident" or "IntConst")
-    string text;  // content string
-};
-
-static const unordered_set<string> keywords = {
-    "int","void","if","else","while","break","continue","return"
-};
-
-string input;
-size_t posi = 0, len_input = 0;
-
-// helper
-bool is_alpha(char c){ return (c=='_') || ('a'<=c && c<='z') || ('A'<=c && c<='Z'); }
-bool is_digit(char c){ return '0'<=c && c<='9'; }
-bool is_alnum(char c){ return is_alpha(c) || is_digit(c); }
-
-char peek_char(size_t offset=0){
-    size_t p = posi + offset;
-    if(p < len_input) return input[p];
-    return '\0';
-}
-char get_char(){
-    if(posi < len_input) return input[posi++];
-    return '\0';
-}
-
-// skip whitespace & comments
-void skip_space_and_comments(){
-    while(true){
-        // whitespace
-        while(posi < len_input &&
-             (input[posi]==' ' || input[posi]=='\t' || input[posi]=='\n' || input[posi]=='\r'))
-            posi++;
-
-        // line comment
-        if(posi+1 < len_input && input[posi]=='/' && input[posi+1]=='/'){
-            posi += 2;
-            while(posi < len_input && input[posi] != '\n') posi++;
+Token Lexer::next_token() {
+    while (current_char() != '\0') {
+        skip_whitespace();
+        
+        if (current_char() == '\0') {
+            break;
+        }
+        
+        // 跳过注释
+        if (current_char() == '/' && (peek_char() == '/' || peek_char() == '*')) {
+            skip_comment();
             continue;
         }
-
-        // block comment
-        if(posi+1 < len_input && input[posi]=='/' && input[posi+1]=='*'){
-            posi += 2;
-            while(posi+1 < len_input){
-                if(input[posi]=='*' && input[posi+1]=='/'){
-                    posi += 2;
-                    break;
-                }
-                posi++;
-            }
-            continue;
+        
+        int start_line = line;
+        int start_column = column;
+        char c = current_char();
+        
+        // 数字
+        if (is_digit(c) || (c == '-' && is_digit(peek_char()))) {
+            return read_number();
         }
+        
+        // 标识符和关键字
+        if (is_alpha(c)) {
+            return read_identifier();
+        }
+        
+        // 双字符运算符
+        if (c == '<' && peek_char() == '=') {
+            advance(); advance();
+            return Token(TokenType::LE, "<=", start_line, start_column);
+        }
+        if (c == '>' && peek_char() == '=') {
+            advance(); advance();
+            return Token(TokenType::GE, ">=", start_line, start_column);
+        }
+        if (c == '=' && peek_char() == '=') {
+            advance(); advance();
+            return Token(TokenType::EQ, "==", start_line, start_column);
+        }
+        if (c == '!' && peek_char() == '=') {
+            advance(); advance();
+            return Token(TokenType::NE, "!=", start_line, start_column);
+        }
+        if (c == '&' && peek_char() == '&') {
+            advance(); advance();
+            return Token(TokenType::AND, "&&", start_line, start_column);
+        }
+        if (c == '|' && peek_char() == '|') {
+            advance(); advance();
+            return Token(TokenType::OR, "||", start_line, start_column);
+        }
+        
+        // 单字符运算符和分隔符
+        advance();
+        switch (c) {
+            case '+': return Token(TokenType::PLUS, "+", start_line, start_column);
+            case '-': return Token(TokenType::MINUS, "-", start_line, start_column);
+            case '*': return Token(TokenType::MULTIPLY, "*", start_line, start_column);
+            case '/': return Token(TokenType::DIVIDE, "/", start_line, start_column);
+            case '%': return Token(TokenType::MODULO, "%", start_line, start_column);
+            case '<': return Token(TokenType::LT, "<", start_line, start_column);
+            case '>': return Token(TokenType::GT, ">", start_line, start_column);
+            case '!': return Token(TokenType::NOT, "!", start_line, start_column);
+            case '=': return Token(TokenType::ASSIGN, "=", start_line, start_column);
+            case '(': return Token(TokenType::LPAREN, "(", start_line, start_column);
+            case ')': return Token(TokenType::RPAREN, ")", start_line, start_column);
+            case '{': return Token(TokenType::LBRACE, "{", start_line, start_column);
+            case '}': return Token(TokenType::RBRACE, "}", start_line, start_column);
+            case ';': return Token(TokenType::SEMICOLON, ";", start_line, start_column);
+            case ',': return Token(TokenType::COMMA, ",", start_line, start_column);
+            default:
+                return Token(TokenType::ERROR_TOKEN, std::string(1, c), start_line, start_column);
+        }
+    }
+    
+    return Token(TokenType::EOF_TOKEN, "", line, column);
+}
 
-        break;
+std::vector<Token> Lexer::tokenize() {
+    std::vector<Token> tokens;
+    Token token = next_token();
+    
+    while (token.type != TokenType::EOF_TOKEN) {
+        tokens.push_back(token);
+        token = next_token();
+    }
+    
+    tokens.push_back(token); 
+    return tokens;
+}
+
+char Lexer::current_char() {
+    if (position >= input.length()) {
+        return '\0';
+    }
+    return input[position];
+}
+
+char Lexer::peek_char(size_t offset) {
+    size_t peek_pos = position + offset;
+    if (peek_pos >= input.length()) {
+        return '\0';
+    }
+    return input[peek_pos];
+}
+
+void Lexer::advance() {
+    if (position < input.length()) {
+        if (current_char() == '\n') {
+            line++;
+            column = 1;
+        } else {
+            column++;
+        }
+        position++;
     }
 }
 
-// identifier / keyword
-Token read_ident_or_keyword(){
-    size_t start = posi;
-    get_char();
-    while(is_alnum(peek_char())) get_char();
-    string s = input.substr(start, posi - start);
-
-    Token tk;
-    if(keywords.count(s)){
-        tk.kind = TK_KEYWORD;
-        tk.typ  = "'" + s + "'";
-        tk.text = s;
-    } else {
-        tk.kind = TK_IDENT;
-        tk.typ  = "Ident";
-        tk.text = s;
+void Lexer::skip_whitespace() {
+    while (current_char() != '\0' && std::isspace(current_char())) {
+        advance();
     }
-    return tk;
 }
 
-// read unsigned integer constant (no leading sign)
-Token read_number(){
-    size_t start = posi;
-    while(is_digit(peek_char())) get_char();
-    Token tk;
-    tk.kind = TK_INTCONST;
-    tk.typ  = "IntConst";
-    tk.text = input.substr(start, posi - start);
-    return tk;
-}
-
-bool starts_with(const string &s){
-    return posi + s.size() <= len_input &&
-           input.compare(posi, s.size(), s) == 0;
-}
-
-int main(){
-    ios::sync_with_stdio(false);
-    cin.tie(nullptr);
-
-    {
-        ostringstream ss;
-        ss << cin.rdbuf();
-        input = ss.str();
-    }
-    len_input = input.size();
-
-    vector<Token> tokens;
-
-    while(true){
-        skip_space_and_comments();
-        if(posi >= len_input) break;
-
-        char c = peek_char();
-
-        // identifier / keyword
-        if(is_alpha(c)){
-            tokens.push_back(read_ident_or_keyword());
-            continue;
+void Lexer::skip_comment() {
+    if (current_char() == '/' && peek_char() == '/') {
+        // 单行注释
+        while (current_char() != '\0' && current_char() != '\n') {
+            advance();
         }
-
-        // number (unsigned; '-' is tokenized separately)
-        if(is_digit(c)){
-            tokens.push_back(read_number());
-            continue;
-        }
-
-        // multi-character operators (must check before single-char)
-        static const vector<string> multi_ops = {
-            "<=" , ">=" , "==" , "!=" , "&&" , "||"
-        };
-        bool matched = false;
-        for(const auto &op : multi_ops){
-            if(starts_with(op)){
-                tokens.push_back({ TK_SYMBOL, "'" + op + "'", op });
-                posi += op.size();
-                matched = true;
+    } else if (current_char() == '/' && peek_char() == '*') {
+        // 多行注释
+        advance(); // 跳过 '/'
+        advance(); // 跳过 '*'
+        
+        while (current_char() != '\0') {
+            if (current_char() == '*' && peek_char() == '/') {
+                advance(); // 跳过 '*'
+                advance(); // 跳过 '/'
                 break;
             }
-        }
-        if(matched) continue;
-
-        // one-character operators / symbols
-        // include '!' as single-character logical not
-        static const string one_ops = "(){},;+-*/%<>!=|&";
-        char ch = get_char();
-
-        string s(1, ch);
-        if(one_ops.find(ch) != string::npos){
-            // Note: for '|' and '&' single char appearing alone are allowed tokens,
-            // but '||' and '&&' were matched above and won't reach here.
-            tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
-        } else {
-            // unknown char, still output as symbol (helps debugging)
-            tokens.push_back({ TK_SYMBOL, "'" + s + "'", s });
+            advance();
         }
     }
+}
 
-    // output
-    for(size_t i=0;i<tokens.size();i++){
-        const auto &t = tokens[i];
-        cout << i << ":" << t.typ << ":\"" << t.text << "\"\n";
+Token Lexer::read_number() {
+    std::string number;
+    int start_line = line;
+    int start_column = column;
+    
+    // 处理负号
+    if (current_char() == '-') {
+        number += current_char();
+        advance();
     }
+    
+    // 读取数字
+    while (current_char() != '\0' && is_digit(current_char())) {
+        number += current_char();
+        advance();
+    }
+    
+    return Token(TokenType::NUMBER, number, start_line, start_column);
+}
 
-    return 0;
+Token Lexer::read_identifier() {
+    std::string identifier;
+    int start_line = line;
+    int start_column = column;
+    
+    while (current_char() != '\0' && (is_alnum(current_char()) || current_char() == '_')) {
+        identifier += current_char();
+        advance();
+    }
+    
+    TokenType type = get_keyword_type(identifier);
+    return Token(type, identifier, start_line, start_column);
+}
+
+bool Lexer::is_alpha(char c) {
+    return std::isalpha(c) || c == '_';
+}
+
+bool Lexer::is_digit(char c) {
+    return std::isdigit(c);
+}
+
+bool Lexer::is_alnum(char c) {
+    return std::isalnum(c) || c == '_';
+}
+
+TokenType Lexer::get_keyword_type(const std::string& word) {
+    static const std::unordered_map<std::string, TokenType> keywords = {
+        {"int", TokenType::INT},
+        {"void", TokenType::VOID},
+        {"if", TokenType::IF},
+        {"else", TokenType::ELSE},
+        {"while", TokenType::WHILE},
+        {"break", TokenType::BREAK},
+        {"continue", TokenType::CONTINUE},
+        {"return", TokenType::RETURN}
+    };
+    
+    auto it = keywords.find(word);
+    return (it != keywords.end()) ? it->second : TokenType::IDENTIFIER;
+}
+
+std::string Lexer::token_type_to_string(TokenType type) {
+    switch (type) {
+        case TokenType::NUMBER: return "NUMBER";
+        case TokenType::IDENTIFIER: return "IDENTIFIER";
+        case TokenType::INT: return "INT";
+        case TokenType::VOID: return "VOID";
+        case TokenType::IF: return "IF";
+        case TokenType::ELSE: return "ELSE";
+        case TokenType::WHILE: return "WHILE";
+        case TokenType::BREAK: return "BREAK";
+        case TokenType::CONTINUE: return "CONTINUE";
+        case TokenType::RETURN: return "RETURN";
+        case TokenType::PLUS: return "PLUS";
+        case TokenType::MINUS: return "MINUS";
+        case TokenType::MULTIPLY: return "MULTIPLY";
+        case TokenType::DIVIDE: return "DIVIDE";
+        case TokenType::MODULO: return "MODULO";
+        case TokenType::LT: return "LT";
+        case TokenType::GT: return "GT";
+        case TokenType::LE: return "LE";
+        case TokenType::GE: return "GE";
+        case TokenType::EQ: return "EQ";
+        case TokenType::NE: return "NE";
+        case TokenType::AND: return "AND";
+        case TokenType::OR: return "OR";
+        case TokenType::NOT: return "NOT";
+        case TokenType::ASSIGN: return "ASSIGN";
+        case TokenType::LPAREN: return "LPAREN";
+        case TokenType::RPAREN: return "RPAREN";
+        case TokenType::LBRACE: return "LBRACE";
+        case TokenType::RBRACE: return "RBRACE";
+        case TokenType::SEMICOLON: return "SEMICOLON";
+        case TokenType::COMMA: return "COMMA";
+        case TokenType::EOF_TOKEN: return "EOF";
+        case TokenType::ERROR_TOKEN: return "ERROR";
+        default: return "UNKNOWN";
+    }
 }
