@@ -1,23 +1,31 @@
-cmake_minimum_required(VERSION 3.20)
-project(ToyC)
+cmake_minimum_required(VERSION 3.16)
+project(ToyC_Compiler)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(FLEX REQUIRED)
+find_package(BISON REQUIRED)
+
 # 包含目录
 include_directories(src)
 include_directories(.)
+include_directories(${CMAKE_CURRENT_BINARY_DIR})
 
-# 源文件
+# Flex/Bison generation
+FLEX_TARGET(Lexer lexer/lexer.l ${CMAKE_CURRENT_BINARY_DIR}/lexer.cpp)
+BISON_TARGET(Parser parser/parser.y ${CMAKE_CURRENT_BINARY_DIR}/parser.cpp)
+ADD_FLEX_BISON_DEPENDENCY(Lexer Parser)
+
+# 源文件 - 使用 Flex/Bison
 set(SOURCES
-    src/toyc_main.cpp
-    src/ast.cpp
-    src/symbol_table.cpp
-    src/semantic.cpp
-    src/codegen.cpp
-    src/optimizer.cpp
-    src/lexer.cpp
-    src/parser.cpp
+    main.cpp
+    ${FLEX_Lexer_OUTPUTS}
+    ${BISON_Parser_OUTPUTS}
+    parser/ast.cpp
+    semantic/semantic.cpp
+    ir/irgen.cpp
+    codegen/codegen.cpp
 )
 
 # 创建可执行文件
